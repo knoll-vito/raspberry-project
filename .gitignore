@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.python-version
+
+# 敏感文件
+.env
+.env.local
+
+# 数据 / 模型产物（通常不入 git；如需追踪请用 git-lfs）
+data/*.jsonl
+!data/.gitkeep
+student/model.pkl
+student/feature_meta.json
+student/evaluation_report.json
+
+# IDE / OS
+.idea/
+.vscode/
+.DS_Store
+
+# 临时
+*.log
+*.tmp

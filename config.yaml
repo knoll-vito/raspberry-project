@@ -1,0 +1,66 @@
+# 灾后伤亡风险评估 · CoT 蒸馏项目配置
+# 所有阶段共享同一份配置，路径使用相对项目根目录
+
+project:
+  name: cot-disaster-risk
+  version: 0.1.0-poc
+
+paths:
+  raw_samples:      data/raw_samples.jsonl
+  teacher_labeled:  data/teacher_labeled.jsonl
+  failed_samples:   data/failed_samples.jsonl
+  clean_dataset:    data/clean_dataset.jsonl
+  model:            student/model.pkl
+  feature_meta:     student/feature_meta.json
+  eval_report:      student/evaluation_report.json
+
+# --- 阶段 2：样本生成 ---
+sample_generation:
+  n_samples: 50              # PoC 阶段，先跑通链路；放量到 v1 改 1000
+  seed: 42
+
+# --- 阶段 3：Teacher 标注 ---
+teacher:
+  provider: deepseek         # deepseek | mock
+  model: deepseek-v4         # 实施前请用官方文档核验模型名
+  base_url: https://api.deepseek.com/v1
+  temperature: 0.3
+  max_tokens: 1024
+  timeout_s: 60
+  max_concurrent: 3          # 初期保守，稳定后再调高
+  max_retries: 3
+  prompt_version: v1         # v1 | v2 | v3 | v4
+
+# --- 阶段 4：质量过滤 ---
+filter:
+  confidence_min: 0.5
+  reasoning_min_chars: 100
+  hard_score_max_gap: 30     # 推理结论与 score 偏差阈值
+  enable_dedup: true
+
+# --- 阶段 5：Student 训练 ---
+student:
+  test_size: 0.2
+  seed: 42
+  soft_weight_alpha: 0.6     # 软标签权重；< 500 用 0.8；> 2000 用 0.4
+  use_confidence_weight: true
+  early_stopping_rounds: 30
+  lightgbm:
+    objective: regression
+    metric: rmse
+    n_estimators: 300
+    learning_rate: 0.05
+    max_depth: 6
+    num_leaves: 31
+    min_child_samples: 20
+    reg_alpha: 0.1
+    reg_lambda: 0.1
+    feature_fraction: 0.9
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    verbose: -1
+
+# --- 阶段 6：部署 ---
+deploy:
+  benchmark_iterations: 1000
+  warmup_iterations: 50
