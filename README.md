@@ -7,7 +7,7 @@
 ## 项目特性
 
 - 16 维特征向量（5 灾种 one-hot + 9 连续 + 2 二值），覆盖地震、洪水、山体滑坡、城市火灾、森林火灾
-- 四级风险等级输出：一般 / 较大 / 重大 / 特别重大（对齐国家应急响应标准）
+- 四级风险等级输出：一般 / 较大 / 重大 / 特别重大
 - TreeSHAP 可解释性分析 + 动态四段式推理生成
 - Isotonic Regression 后校准，RMSE 5.92、等级准确率 96.4%
 - 模型体积 ~410KB，树莓派 5 单次推理 < 1ms
@@ -179,39 +179,132 @@ python3 deploy/inference.py --file data/eval_test_set.jsonl --full
 | `night_time` | int | 0 / 1 | 是否夜间事件 |
 | `holiday_event` | int | 0 / 1 | 是否节假日/大型活动期间 |
 
+## 数据文件说明
+
+### CSV 数据存放位置
+
+训练数据以 CSV 格式存放在 `data/` 目录下：
+
+```
+data/
+├── starter_real.csv              # 真实历史灾害记录（290 条），训练的基础数据源
+├── augmented_samples.jsonl       # LHS 合成样本（300 条），由 generate_augmented_samples.py 生成
+├── merged_train.jsonl            # 合并后的完整训练集（690 条 = 290 真实 + 300 合成 + 100 双向蒸馏）
+├── eval_test_set.jsonl           # Teacher 生成的评估测试集（138 条）
+└── eval_samples.jsonl            # 评估用合成样本
+```
+
+### 添加自定义 CSV 数据
+
+如果你有新的灾害记录 CSV 文件，使用 `csv_to_jsonl.py` 工具导入：
+
+```bash
+python3 tools/csv_to_jsonl.py data/your_data.csv --out data/raw_samples.jsonl
+```
+
+CSV 文件必须包含以下列头（必填字段）：
+
+```
+disaster_type, magnitude, building_collapse_rate, estimated_trapped,
+temperature_c, hours_since_disaster, rescue_eta_hours, road_accessibility
+```
+
+可选列头（元数据，用于推理时填充 header）：
+
+```
+event_name, source, lat, lon, event_time_utc, device_id,
+medical_accessibility, rescue_skill_level, night_time, holiday_event
+```
+
+其中 `disaster_type` 仅接受以下 5 种值：`earthquake`、`flood`、`urban_fire`、`forest_fire`、`landslide`。工具会自动校验值域范围并跳过异常行。
+
+## Teacher 模型 API 配置
+
+Teacher 模型支持两种模式：**Mock 规则引擎**（无需 API，本地运行）和 **DeepSeek API**（真实大模型标注）。
+
+### Mock 模式（默认，无需配置）
+
+Mock Teacher 是基于救援领域规则的打分器，无需任何 API key 即可运行：
+
+```bash
+python3 scripts/run_labeling.py --provider mock
+```
+
+Mock 模式适用于：开发调试、端到端链路验证、无网络环境下的离线训练。
+
+### DeepSeek API 模式
+
+#### 第一步：配置 API Key
+
+```bash
+cp .env.example .env
+```
+
+编辑 `.env` 文件，填入你的 DeepSeek API Key：
+
+```env
+DEEPSEEK_API_KEY=sk-your-actual-key-here
+
+# 可选：自定义 API 地址（例如走代理）
+# DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+```
+
+> API Key 获取方式：访问 [DeepSeek 开放平台](https://platform.deepseek.com/) 注册并创建 API Key。
+
+#### 第二步：调整 config.yaml（可选）
+
+`config.yaml` 中 `teacher` 部分控制 API 调用行为：
+
+```yaml
+teacher:
+  provider: deepseek           # deepseek | mock
+  model: deepseek-v4-pro       # 推荐 deepseek-v4-pro（推理链质量更高）
+  base_url: https://api.deepseek.com/v1
+  temperature: 0.3             # 较低温度保证标注一致性
+  max_tokens: 1500             # 三段 reasoning + 72h 分析需要足够空间
+  timeout_s: 240               # V4-pro 偶发慢响应，建议 ≥ 200s
+  max_concurrent: 5            # 并发数，视 API 限流调整
+  max_retries: 3               # 失败自动重试次数
+  prompt_version: v1           # prompt 模板版本（v1~v4）
+```
+
+#### 第三步：运行标注
+
+```bash
+# 使用 DeepSeek API 标注
+python3 scripts/run_labeling.py --provider deepseek
+```
+
+标注支持**断点续标**：如果中途中断，重新运行会自动跳过已完成的 sample_id，不会重复标注。失败的样本会单独保存到 `data/failed_samples.jsonl`，可二次重试。
+
 ## 完整训练流程
 
 如需从零训练模型，按以下步骤执行：
 
 ```bash
-# 1) 生成合成样本（Latin Hypercube Sampling，300 条）
+# 1) 导入 CSV 数据（如使用已有的 starter_real.csv 可跳过）
+python3 tools/csv_to_jsonl.py data/starter_real.csv
+
+# 2) 生成合成样本（Latin Hypercube Sampling，300 条）
 python3 scripts/generate_augmented_samples.py
 
-# 2) Teacher 标注（Mock 模式无需 API key）
+# 3) Teacher 标注（Mock 模式无需 API key；真实标注用 --provider deepseek）
 python3 scripts/run_labeling.py --provider mock
 
-# 3) 质量过滤
+# 4) 质量过滤
 python3 scripts/filter.py
 
-# 4) 训练 Student 模型
+# 5) 训练 Student 模型（可用 --dataset 指定自定义训练集路径）
 python3 student/train.py
 
-# 5) 模型评估
+# 6) 模型评估
 python3 student/evaluate.py
 
-# 6) 拟合校准器（需要 Teacher 标注的评估数据）
+# 7) 拟合校准器（需要 Teacher 标注的评估数据）
 python3 student/calibration.py --fit
 
-# 7) 性能压测
+# 8) 性能压测
 python3 deploy/benchmark.py
-```
-
-### 使用真实 DeepSeek Teacher
-
-```bash
-cp .env.example .env
-# 编辑 .env 填入 DEEPSEEK_API_KEY
-python3 scripts/run_labeling.py --provider deepseek
 ```
 
 ## 模型评估结果
