@@ -12,7 +12,18 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
-DISASTER_TYPES = ["earthquake", "flood", "fire", "landslide"]
+DISASTER_TYPES = ["earthquake", "flood", "urban_fire", "forest_fire", "landslide"]
+
+
+def score_to_level(score: float) -> str:
+    """连续评分 → 四级官方等级（与 prompt_templates / mock_labeler / parser 同口径）。"""
+    if score < 25:
+        return "一般"
+    if score < 50:
+        return "较大"
+    if score < 75:
+        return "重大"
+    return "特别重大"
 
 NUMERIC_FEATURES = [
     "magnitude",
@@ -41,7 +52,7 @@ def load_clean(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarr
     y_hard_level: int 0~3 对应 low/medium/high/critical（备用，可用于多任务）
     weights: confidence
     """
-    LEVEL_TO_INT = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    LEVEL_TO_INT = {"一般": 0, "较大": 1, "重大": 2, "特别重大": 3}
 
     X, y_soft, y_hard, w = [], [], [], []
     with open(path, "r", encoding="utf-8") as f:
@@ -52,7 +63,7 @@ def load_clean(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarr
             rec = json.loads(line)
             X.append(vectorize(rec["input"]))
             y_soft.append(float(rec["score"]))
-            y_hard.append(LEVEL_TO_INT.get(rec.get("risk_level", "medium"), 1))
+            y_hard.append(LEVEL_TO_INT.get(rec.get("risk_level", "较大"), 1))
             w.append(float(rec.get("confidence", 1.0)))
     return (
         np.asarray(X, dtype=np.float32),

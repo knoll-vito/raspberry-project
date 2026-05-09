@@ -1,0 +1,9 @@
+[benchmark] iterations=1000 warmup=50
+  mean   0.054 ms
+  P50    0.054 ms
+  P95    0.068 ms
+  P99    0.079 ms
+  model  232.2 KB
+[benchmark] acceptance:
+  P99 < 5ms      : PASS (0.079)
+  model < 2MB    : PASS (232.2KB)

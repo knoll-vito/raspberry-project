@@ -1,9 +1,10 @@
 """Mock Teacher：基于规则的可解释打分器。
 
 设计目的：
-1. 在没有 DeepSeek API key 的情况下让整个 Pipeline 端到端跑通
-2. 输出格式与真实 Teacher 完全一致（reasoning + score + risk_level + confidence）
-3. 规则基于救援领域常识，足以支撑 Student 模型学到合理的特征排序
+1. 没有 DeepSeek API key 时让整个 Pipeline 端到端跑通
+2. 输出格式与真实 Teacher 完全一致
+   （event_category + reasoning + score + risk_level + confidence）
+3. 规则基于救援领域常识，足以让 Student 学到合理的特征排序
 
 ⚠️ Mock 仅用于链路验证，正式数据集必须用真实 Teacher 重新标注。
 """
@@ -15,23 +16,51 @@ import random
 from typing import Dict, List
 
 
-# 灾种基线风险（0~30）
+# 5 灾种基线风险（0~30）
 DISASTER_BASELINE = {
     "earthquake": 25,
     "flood": 18,
-    "fire": 22,
+    "urban_fire": 22,
+    "forest_fire": 16,   # 森林火灾通常人员密度低、可疏散
     "landslide": 20,
+}
+
+# 灾种 → 突发事件大类（与 prompt_templates 中的 4 大类一致）
+DISASTER_TO_CATEGORY = {
+    "earthquake": "自然灾害",
+    "flood": "自然灾害",
+    "forest_fire": "自然灾害",
+    "landslide": "自然灾害",
+    "urban_fire": "事故灾难",
 }
 
 
 def _level_from_score(score: float) -> str:
     if score < 25:
-        return "low"
+        return "一般"
     if score < 50:
-        return "medium"
+        return "较大"
     if score < 75:
-        return "high"
-    return "critical"
+        return "重大"
+    return "特别重大"
+
+
+def _survival_rate_from_hours(hours: float, temp_c: float) -> tuple[str, float]:
+    """根据黄金 72h 非线性衰减经验曲线返回 (区间描述, 中位生还率)。
+
+    与 prompt_templates 系统提示中的曲线对齐。
+    """
+    # 极端温度让曲线整体提前 ~9h
+    eff_h = hours
+    if temp_c < 0 or temp_c > 35:
+        eff_h += 9
+    if eff_h <= 24:
+        return ("≥85%（黄金救援早期）", 0.90)
+    if eff_h <= 48:
+        return ("50~70%（生命支持开始衰竭）", 0.60)
+    if eff_h <= 72:
+        return ("20~40%（不可逆损伤累积）", 0.30)
+    return ("<10%（已超黄金窗口，生还概率急剧下降）", 0.05)
 
 
 def _score_components(s: Dict) -> List[tuple]:
@@ -41,7 +70,6 @@ def _score_components(s: Dict) -> List[tuple]:
     base = DISASTER_BASELINE.get(s["disaster_type"], 20)
     out.append(("灾种基线", base, f"{s['disaster_type']} 基线风险约 {base}"))
 
-    # 强度：3.0~8.5 → 0~25 分（地震尤其敏感）
     mag = float(s["magnitude"])
     if s["disaster_type"] == "earthquake":
         mag_score = max(0, (mag - 3.0) / 5.5) * 25
@@ -49,59 +77,74 @@ def _score_components(s: Dict) -> List[tuple]:
         mag_score = max(0, (mag - 3.0) / 5.5) * 18
     out.append(("强度", mag_score, f"magnitude={mag} 贡献 {mag_score:.1f}"))
 
-    # 倒塌率：线性 0~20
     cr = float(s["building_collapse_rate"])
     cr_score = cr * 20
     out.append(("建筑倒塌率", cr_score, f"倒塌率 {cr:.2f} 贡献 {cr_score:.1f}"))
 
-    # 被困人数：log scale 0~12
     trapped = int(s["estimated_trapped"])
     trapped_score = min(12, math.log1p(trapped) * 2.2)
     out.append(("被困人数", trapped_score, f"被困 {trapped} 人 贡献 {trapped_score:.1f}"))
 
-    # 极端温度：偏离 20℃ 越远越高，0~10
     t = float(s["temperature_c"])
     temp_score = min(10, abs(t - 20) * 0.4)
     out.append(("环境温度", temp_score, f"{t}℃ 偏离舒适区 贡献 {temp_score:.1f}"))
 
-    # 黄金 72h：超过越久风险递增；同时 rescue_eta 越长越糟
     hours = float(s["hours_since_disaster"])
     eta = float(s["rescue_eta_hours"])
-    delay = max(0, hours - 24) * 0.15 + eta * 0.6  # 0~~20
+    delay = max(0, hours - 24) * 0.15 + eta * 0.6
     delay_score = min(20, delay)
     out.append(("时间窗", delay_score, f"灾后 {hours}h, 救援 ETA {eta}h 贡献 {delay_score:.1f}"))
 
-    # 道路可达性：越差扣分越多（这里"扣分"取负）
     road = float(s["road_accessibility"])
-    road_score = (1 - road) * 12  # 0~12
+    road_score = (1 - road) * 12
     out.append(("道路可达性", road_score, f"可达性 {road:.2f} 贡献 {road_score:.1f}"))
 
     return out
 
 
 def _confidence(s: Dict, components: List[tuple]) -> float:
-    """规则版置信度：分散贡献越均衡越自信；存在极端值时也更自信。"""
     total = sum(c[1] for c in components)
     if total <= 0:
         return 0.5
-    # 主导因子占比越高，越确信结论；但太低也降信心
     leads = max(c[1] for c in components) / total
     base = 0.65 + min(0.25, leads * 0.4)
-    # 缺失/异常时降低
     if s["building_collapse_rate"] == 0 and s["estimated_trapped"] == 0:
         base -= 0.15
     return round(max(0.3, min(0.98, base)), 3)
 
 
 def _format_reasoning(s: Dict, components: List[tuple], score: float) -> str:
-    lines = [
-        f"对样本 {s.get('sample_id','?')} 做分步推理：",
-    ]
+    hours = float(s["hours_since_disaster"])
+    eta = float(s["rescue_eta_hours"])
+    temp = float(s["temperature_c"])
+    total_exposure = hours + eta
+    surv_band, _ = _survival_rate_from_hours(total_exposure, temp)
+
+    sections = []
+
+    # 第一段：关键风险因子识别
+    sections.append("【关键风险因子识别】")
     for name, val, expl in components:
-        lines.append(f"- {name}：{expl}")
-    lines.append(f"以上因子线性叠加得到风险评分 {score:.1f}，归类为 {_level_from_score(score)}。")
-    lines.append("结论：在该灾情条件下，应优先调度搜救与医疗资源，特别关注主导风险因子。")
-    return "\n".join(lines)
+        sections.append(f"  - {name}：{expl}")
+
+    # 第二段：黄金 72h 衰减分析（必答项）
+    extreme_note = ""
+    if temp < 0 or temp > 35:
+        extreme_note = f"环境温度 {temp}℃ 处于极端段，曲线整体提前约 9h，"
+    sections.append("【黄金 72h 衰减分析】")
+    sections.append(
+        f"  当前已过 {hours}h、救援预计还需 {eta}h，总暴露时长约 {total_exposure:.1f}h。"
+        f"{extreme_note}对照非线性衰减曲线，被困人员生还率粗估为 {surv_band}。"
+    )
+
+    # 第三段：叠加与评分依据
+    sections.append("【多因子叠加与评分依据】")
+    sections.append(
+        f"  以上因子线性叠加得到风险评分 {score:.1f}，归类为 {_level_from_score(score)}。"
+        "建议优先调度搜救与医疗资源，重点关注主导风险因子。"
+    )
+
+    return "\n".join(sections)
 
 
 def label(sample: Dict, *, jitter: float = 0.0, seed: int | None = None) -> Dict:
@@ -123,10 +166,11 @@ def label(sample: Dict, *, jitter: float = 0.0, seed: int | None = None) -> Dict
     return {
         "sample_id": sample.get("sample_id"),
         "input": sample,
+        "event_category": DISASTER_TO_CATEGORY.get(sample["disaster_type"], "自然灾害"),
         "reasoning": _format_reasoning(sample, components, score),
         "score": round(score, 2),
         "risk_level": _level_from_score(score),
         "confidence": _confidence(sample, components),
-        "teacher": "mock-rule-v1",
+        "teacher": "mock-rule-v2",
         "prompt_version": "mock",
     }

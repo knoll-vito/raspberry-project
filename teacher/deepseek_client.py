@@ -45,7 +45,8 @@ class DeepSeekLabeler:
         base_url = os.environ.get("DEEPSEEK_BASE_URL", cfg["teacher"]["base_url"])
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url)
         self.cfg = cfg["teacher"]
-        self.semaphore = asyncio.Semaphore(int(self.cfg["max_concurrent"]))
+        # 注意：semaphore 必须延迟到事件循环内创建（Python 3.9 兼容性）
+        self.semaphore: Optional[asyncio.Semaphore] = None
         self._token_usage = {"prompt": 0, "completion": 0, "calls": 0}
 
     @staticmethod
@@ -76,6 +77,14 @@ class DeepSeekLabeler:
                 {"role": "user", "content": prompt},
             ],
         )
+        # 防御：openai SDK 在 content_filter / 空响应 / 上游故障时
+        # 可能返回 None 或 choices=[]，并不抛异常
+        if resp is None:
+            raise ValueError("api returned None response")
+        if not getattr(resp, "choices", None):
+            fr = getattr(resp, "id", "?")
+            raise ValueError(f"api returned no choices (resp.id={fr})")
+
         # token 统计
         if getattr(resp, "usage", None):
             self._token_usage["prompt"] += resp.usage.prompt_tokens or 0
@@ -89,6 +98,7 @@ class DeepSeekLabeler:
         return parsed
 
     async def label_one(self, sample: dict, prompt_version: str) -> Optional[dict]:
+        assert self.semaphore is not None, "label_one must be called from within label_dataset"
         async with self.semaphore:
             try:
                 async for attempt in AsyncRetrying(
@@ -121,12 +131,24 @@ class DeepSeekLabeler:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         failed_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # 在事件循环内创建 Semaphore，保证 Python 3.9 也能正常工作
+        if self.semaphore is None:
+            self.semaphore = asyncio.Semaphore(int(self.cfg["max_concurrent"]))
+
         done = self._load_done_ids(output_path)
         pending: List[dict] = [s for s in samples if s.get("sample_id") not in done]
-        log.info("done=%d pending=%d", len(done), len(pending))
+        already_in_file = sum(1 for s in samples if s.get("sample_id") in done)
+        log.info("done_in_file=%d pending=%d", len(done), len(pending))
 
         if not pending:
-            return {"labeled": len(done), "failed": 0, "skipped": 0, "tokens": self._token_usage}
+            return {
+                "newly_labeled": 0,
+                "failed": 0,
+                "already_in_file": already_in_file,
+                "note": "所有样本 sample_id 已存在于 output_path —— 没有调用 API。"
+                        "如要重跑，请 --reset 或换 output 路径。",
+                "tokens": self._token_usage,
+            }
 
         out_f = open(output_path, "a", encoding="utf-8")
         fail_f = open(failed_path, "a", encoding="utf-8")
@@ -153,9 +175,9 @@ class DeepSeekLabeler:
 
         failed = sum(1 for r in results if "error" in r)
         return {
-            "labeled": len(results) - failed,
+            "newly_labeled": len(results) - failed,
             "failed": failed,
-            "skipped": len(done),
+            "already_in_file": len(done),
             "elapsed_s": round(elapsed, 2),
             "tokens": self._token_usage,
         }

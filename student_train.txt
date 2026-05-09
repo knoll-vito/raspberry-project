@@ -1,0 +1,23 @@
+[train] dataset: n=160 features=12
+Training until validation scores don't improve for 50 rounds
+[50]	train's rmse: 4.2335	valid's rmse: 7.91275
+[100]	train's rmse: 2.49909	valid's rmse: 6.70301
+[150]	train's rmse: 1.75119	valid's rmse: 6.45084
+[200]	train's rmse: 1.2567	valid's rmse: 6.39691
+Early stopping, best iteration is:
+[175]	train's rmse: 1.43922	valid's rmse: 6.34076
+[train] feature importance (gain):
+  magnitude                      48172.4
+  building_collapse_rate         27578.3
+  road_accessibility             21286.0
+  hours_since_disaster           17794.0
+  estimated_trapped              16467.5
+  temperature_c                  14544.6
+  rescue_eta_hours               13284.3
+  is_earthquake                  2450.0
+  is_landslide                   442.1
+  is_forest_fire                 301.1
+  is_urban_fire                  188.5
+  is_flood                       161.5
+[train] saved → student/model.pkl (232.2 KB)
+[train] meta  → student/feature_meta.json

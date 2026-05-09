@@ -1,0 +1,7 @@
+[evaluate]
+  n                  160
+  mae                1.771
+  rmse               3.079
+  pearson_r          0.9724
+  level_accuracy     0.9437
+  top10_disagreements -> see evaluation_report.json

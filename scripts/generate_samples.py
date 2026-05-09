@@ -29,7 +29,8 @@ def load_config() -> dict:
         return yaml.safe_load(f)
 
 
-DISASTER_TYPES = ["earthquake", "flood", "fire", "landslide"]
+# 5 灾种：fire 拆为 urban_fire (事故灾难) 与 forest_fire (自然灾害)
+DISASTER_TYPES = ["earthquake", "flood", "urban_fire", "forest_fire", "landslide"]
 
 
 def _sample_magnitude(rng: random.Random) -> float:
@@ -93,10 +94,18 @@ def make_sample(idx: int, rng: random.Random) -> dict:
 
 
 def main() -> None:
+    import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--n", type=int, default=None,
+                        help="覆盖 config.yaml 里的 n_samples，用于临时跑不同规模")
+    parser.add_argument("--out", default=None,
+                        help="覆盖输出路径，默认按 config.yaml 写到 raw_samples")
+    args = parser.parse_args()
+
     cfg = load_config()
-    n = int(cfg["sample_generation"]["n_samples"])
+    n = args.n if args.n is not None else int(cfg["sample_generation"]["n_samples"])
     seed = int(cfg["sample_generation"]["seed"])
-    out_path = ROOT / cfg["paths"]["raw_samples"]
+    out_path = Path(args.out) if args.out else (ROOT / cfg["paths"]["raw_samples"])
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     rng = random.Random(seed)

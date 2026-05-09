@@ -1,0 +1,9 @@
+event_name,source,disaster_type,magnitude,building_collapse_rate,estimated_trapped,temperature_c,hours_since_disaster,rescue_eta_hours,road_accessibility
+2008汶川地震-北川县-1h,应急管理部公报2008,earthquake,8.0,0.85,3000,18.5,1,12,0.05
+2008汶川地震-北川县-24h,应急管理部公报2008,earthquake,8.0,0.85,2200,16.2,24,4,0.15
+2008汶川地震-北川县-72h,应急管理部公报2008,earthquake,8.0,0.85,800,14.0,72,1,0.4
+2010玉树地震-结古镇-12h,USGS+中国地震局,earthquake,7.1,0.5,1500,5.0,12,8,0.3
+2015天津港爆炸-12h,国务院调查报告,urban_fire,7.5,0.4,80,28.0,12,2,0.6
+2010甘肃舟曲泥石流-6h,水利部应急公报,landslide,7.5,0.7,1800,15.0,6,6,0.1
+2019响水化工厂爆炸-4h,应急管理部公告,urban_fire,7.0,0.3,150,16.0,4,1,0.8
+2008汶川地震-青川县-48h,?,earthquake,8.0,0.6,400,?,48,3,0.5

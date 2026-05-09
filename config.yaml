@@ -16,18 +16,18 @@ paths:
 
 # --- 阶段 2：样本生成 ---
 sample_generation:
-  n_samples: 50              # PoC 阶段，先跑通链路；放量到 v1 改 1000
+  n_samples: 200             # PoC 起步 200（与方案 §5.3 一致）；v1 放量改 1000
   seed: 42
 
 # --- 阶段 3：Teacher 标注 ---
 teacher:
   provider: deepseek         # deepseek | mock
-  model: deepseek-v4         # 实施前请用官方文档核验模型名
+  model: deepseek-v4-pro     # 与 deepseek-v4-flash 二选一；Teacher 选强模型保证推理链质量
   base_url: https://api.deepseek.com/v1
   temperature: 0.3
-  max_tokens: 1024
-  timeout_s: 60
-  max_concurrent: 3          # 初期保守，稳定后再调高
+  max_tokens: 1500           # 三段 reasoning + 72h 分析需要更多空间
+  timeout_s: 240             # V4-pro 在长 prompt 下偶发 100~150s
+  max_concurrent: 5          # 适度上调，缩短全量耗时
   max_retries: 3
   prompt_version: v1         # v1 | v2 | v3 | v4
 
@@ -44,15 +44,16 @@ student:
   seed: 42
   soft_weight_alpha: 0.6     # 软标签权重；< 500 用 0.8；> 2000 用 0.4
   use_confidence_weight: true
-  early_stopping_rounds: 30
+  early_stopping_rounds: 50         # 小样本下给更多耐心
   lightgbm:
     objective: regression
     metric: rmse
-    n_estimators: 300
+    n_estimators: 500
     learning_rate: 0.05
-    max_depth: 6
-    num_leaves: 31
-    min_child_samples: 20
+    max_depth: 5                    # PoC 数据量小，浅一点防过拟合
+    num_leaves: 15                  # 配合 max_depth=5
+    min_child_samples: 5            # ⚠️ PoC 关键：原 20 在 200 条样本下也偏紧；v1 ≥1000 条可改回 20
+    min_data_in_leaf: 5             # 与上同义，明确写出更稳
     reg_alpha: 0.1
     reg_lambda: 0.1
     feature_fraction: 0.9
