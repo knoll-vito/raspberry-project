@@ -101,6 +101,16 @@ def _score_components(s: Dict) -> List[tuple]:
     road_score = (1 - road) * 12
     out.append(("道路可达性", road_score, f"可达性 {road:.2f} 贡献 {road_score:.1f}"))
 
+    # 夜间事件：搜救效率降低，能见度差 → 风险 +6
+    night_score = 6.0 if s.get("night_time") else 0.0
+    if night_score:
+        out.append(("夜间事件", night_score, f"夜间作业贡献 {night_score:.1f}"))
+
+    # 节假日/大型活动：人员密集，被困人数基数更大 → 风险 +5
+    holiday_score = 5.0 if s.get("holiday_event") else 0.0
+    if holiday_score:
+        out.append(("节假日/活动", holiday_score, f"节假日人员密集贡献 {holiday_score:.1f}"))
+
     return out
 
 

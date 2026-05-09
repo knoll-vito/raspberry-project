@@ -53,9 +53,9 @@ N_SAMPLES = 300
 SEED = 42
 
 
-def _disaster_type_for_index(idx: int) -> str:
+def _disaster_type_for_index(idx: int, total: int = N_SAMPLES) -> str:
     """按 DISASTER_WEIGHTS 的累积分布分配灾种"""
-    r = idx / N_SAMPLES
+    r = idx / total
     cum = 0.0
     for dt, w in DISASTER_WEIGHTS.items():
         cum += w
@@ -64,10 +64,10 @@ def _disaster_type_for_index(idx: int) -> str:
     return DISASTER_TYPES[-1]
 
 
-def _build_sample(idx: int, raw: dict) -> dict:
+def _build_sample(idx: int, raw: dict, total: int = N_SAMPLES) -> dict:
     """把连续采样的 raw 值转成带 sample_id / disaster_type 的完整样本"""
     sample_id = f"AUG{idx:05d}"
-    disaster_type = _disaster_type_for_index(idx)
+    disaster_type = _disaster_type_for_index(idx, total)
 
     # magnitude → 地震用里氏，其他用 Venshurst 映射
     mag = raw["magnitude"]
@@ -87,8 +87,8 @@ def _build_sample(idx: int, raw: dict) -> dict:
         "road_accessibility": round(raw["road_accessibility"], 3),
         "medical_accessibility": round(raw["medical_accessibility"], 3),
         "rescue_skill_level": round(raw["rescue_skill_level"], 3),
-        "night_time": int(raw["night_time"]),
-        "holiday_event": int(raw["holiday_event"]),
+        "night_time": int(round(raw["night_time"])),
+        "holiday_event": int(round(raw["holiday_event"])),
     }
 
 
@@ -111,7 +111,7 @@ def generate(output_path: Path, n_samples: int = N_SAMPLES, seed: int = SEED) ->
             raw = {FEATURE_SPACE[j][0]: row[j] for j in range(len(FEATURE_SPACE))}
             # 离散化
             raw["estimated_trapped"] = int(round(raw["estimated_trapped"]))
-            sample = _build_sample(i, raw)
+            sample = _build_sample(i, raw, total=n_samples)
             f.write(json.dumps(sample, ensure_ascii=False) + "\n")
 
     print(f"[generate_augmented] wrote {n_samples} samples → {out_path}")
@@ -119,7 +119,7 @@ def generate(output_path: Path, n_samples: int = N_SAMPLES, seed: int = SEED) ->
     print(f"  disaster distribution:")
     dt_counts: dict = {}
     for i in range(n_samples):
-        dt = _disaster_type_for_index(i)
+        dt = _disaster_type_for_index(i, n_samples)
         dt_counts[dt] = dt_counts.get(dt, 0) + 1
     for dt, cnt in sorted(dt_counts.items()):
         print(f"    {dt}: {cnt} ({cnt/n_samples*100:.1f}%)")

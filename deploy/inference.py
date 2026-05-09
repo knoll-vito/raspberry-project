@@ -30,6 +30,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from student.calibration import load_calibrator  # noqa: E402
 from student.features import FEATURE_ORDER, vectorize, score_to_level as _level  # noqa: E402
 from student.reasoning_generator import generate_student_reasoning  # noqa: E402
 from teacher import mock_labeler  # noqa: E402
@@ -282,20 +283,27 @@ class RiskScorer:
         import joblib
         self.booster = joblib.load(model_path)
         self.best_iter = getattr(self.booster, "best_iteration", None)
+        self._calibrator = load_calibrator()
+
+    def _calibrate(self, score: float) -> float:
+        if self._calibrator is None:
+            return score
+        return float(self._calibrator.predict([score])[0])
 
     def predict_one(self, sample: Dict) -> Dict:
         """简洁输出 — 用于 benchmark / batch / 内部调用。"""
         X = np.asarray([vectorize(sample)], dtype=np.float32)
-        score = float(self.booster.predict(X, num_iteration=self.best_iter)[0])
-        score = max(0.0, min(100.0, score))
+        raw = float(self.booster.predict(X, num_iteration=self.best_iter)[0])
+        score = max(0.0, min(100.0, self._calibrate(raw)))
         return {"score": round(score, 2), "risk_level": _level(score)}
 
     def predict_batch(self, samples: List[Dict]) -> List[Dict]:
         X = np.asarray([vectorize(s) for s in samples], dtype=np.float32)
-        scores = self.booster.predict(X, num_iteration=self.best_iter)
+        raw_scores = self.booster.predict(X, num_iteration=self.best_iter)
         return [
-            {"score": round(float(max(0, min(100, s))), 2), "risk_level": _level(float(s))}
-            for s in scores
+            {"score": round(float(max(0, min(100, self._calibrate(s)))), 2),
+             "risk_level": _level(float(max(0, min(100, self._calibrate(s)))))}
+            for s in raw_scores
         ]
 
     def predict_full(self, sample: Dict, *,
@@ -310,8 +318,8 @@ class RiskScorer:
         在批量推理时自动落进 header，不必手动传 --lat / --lon。
         """
         X = np.asarray([vectorize(sample)], dtype=np.float32)
-        score = float(self.booster.predict(X, num_iteration=self.best_iter)[0])
-        score = max(0.0, min(100.0, score))
+        raw = float(self.booster.predict(X, num_iteration=self.best_iter)[0])
+        score = max(0.0, min(100.0, self._calibrate(raw)))
         level_zh = _level(score)
         level_en = LEVEL_ZH_TO_EN.get(level_zh, "UNKNOWN")
         priority = LEVEL_TO_PRIORITY.get(level_zh, 3)

@@ -28,13 +28,19 @@ def load_config() -> dict:
 
 
 def main() -> None:
+    import argparse
     import lightgbm as lgb
     import joblib
     from sklearn.model_selection import train_test_split
 
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset", default=None,
+                        help="覆盖 config 中的 clean_dataset 路径（可传合并后的文件）")
+    args = parser.parse_args()
+
     cfg = load_config()
     scfg = cfg["student"]
-    in_path = ROOT / cfg["paths"]["clean_dataset"]
+    in_path = ROOT / (args.dataset if args.dataset else cfg["paths"]["clean_dataset"])
     model_path = ROOT / cfg["paths"]["model"]
     meta_path = ROOT / cfg["paths"]["feature_meta"]
 

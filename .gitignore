@@ -14,6 +14,8 @@ venv/
 data/*.jsonl
 !data/.gitkeep
 student/model.pkl
+student/model.pkl.*
+student/calibrator.pkl
 student/feature_meta.json
 student/evaluation_report.json
 
