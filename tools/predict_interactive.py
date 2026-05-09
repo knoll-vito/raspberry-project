@@ -65,6 +65,10 @@ def main() -> int:
         "hours_since_disaster": _ask("灾后已过小时数", lo=0, hi=720, default="6"),
         "rescue_eta_hours": _ask("救援预计 ETA 小时", lo=0, hi=168, default="2"),
         "road_accessibility": _ask("道路可通行性", lo=0.0, hi=1.0, default="0.5"),
+        "medical_accessibility": _ask("医疗资源可及性", lo=0.0, hi=1.0, default="0.5"),
+        "rescue_skill_level": _ask("救援队伍技能水平", lo=0.0, hi=1.0, default="0.5"),
+        "night_time": _ask("是否夜间事件 (0/1)", lo=0, hi=1, default="0", is_int=True),
+        "holiday_event": _ask("是否节假日/大型活动 (0/1)", lo=0, hi=1, default="0", is_int=True),
     }
 
     scorer = RiskScorer()

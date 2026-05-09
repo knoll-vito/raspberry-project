@@ -32,7 +32,10 @@ ALL_FIELDS = REQUIRED + OPTIONAL
 VALID_DISASTER_TYPES = {"earthquake", "flood", "urban_fire", "forest_fire", "landslide"}
 
 RANGES = {
-    "magnitude": (3.0, 8.5),
+    # magnitude 上限 10.0：地震里氏到 8.5 即顶端；flood / typhoon 等其他灾种
+    # 用同一字段表达"强度等级"，9.0~9.5 用于特别重大水灾/台风（如 1998 长江、2014 威马逊）。
+    # 模型在 ≤8.5 上训练，>8.5 时会进入树外推区，对 PoC 可接受。
+    "magnitude": (3.0, 10.0),
     "building_collapse_rate": (0.0, 1.0),
     "estimated_trapped": (0, 10000),
     "temperature_c": (-40.0, 50.0),

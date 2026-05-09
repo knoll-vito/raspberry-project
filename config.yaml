@@ -13,6 +13,9 @@ paths:
   model:            student/model.pkl
   feature_meta:     student/feature_meta.json
   eval_report:      student/evaluation_report.json
+  augmented_samples: data/augmented_samples.jsonl
+  test_set:         data/test_set.jsonl
+  bidirectional_train: data/bidirectional_train.jsonl
 
 # --- 阶段 2：样本生成 ---
 sample_generation:

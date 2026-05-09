@@ -15,6 +15,8 @@ import math
 import random
 from typing import Dict, List
 
+from teacher.recommendations import build_recommendations, format_for_reasoning
+
 
 # 5 灾种基线风险（0~30）
 DISASTER_BASELINE = {
@@ -137,12 +139,17 @@ def _format_reasoning(s: Dict, components: List[tuple], score: float) -> str:
         f"{extreme_note}对照非线性衰减曲线，被困人员生还率粗估为 {surv_band}。"
     )
 
-    # 第三段：叠加与评分依据
+    # 第三段：叠加与评分依据（不再有"建议优先调度…"那句固定 boilerplate）
     sections.append("【多因子叠加与评分依据】")
     sections.append(
-        f"  以上因子线性叠加得到风险评分 {score:.1f}，归类为 {_level_from_score(score)}。"
-        "建议优先调度搜救与医疗资源，重点关注主导风险因子。"
+        f"  以上因子线性叠加得到风险评分 {score:.1f}，归类为 {_level_from_score(score)}；"
+        "下一段按等级 + 主导因子 + 极端阈值给出针对性救援建议。"
     )
+
+    # 第四段：针对性救援建议（按 level + 灾种 + 阈值动态生成，1~4 条）
+    recs = build_recommendations(s, _level_from_score(score), max_items=4)
+    sections.append("【针对性救援建议】")
+    sections.append(format_for_reasoning(recs))
 
     return "\n".join(sections)
 

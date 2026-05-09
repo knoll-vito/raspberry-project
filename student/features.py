@@ -14,6 +14,23 @@ import numpy as np
 
 DISASTER_TYPES = ["earthquake", "flood", "urban_fire", "forest_fire", "landslide"]
 
+NUMERIC_FEATURES = [
+    "magnitude",
+    "building_collapse_rate",
+    "estimated_trapped",
+    "temperature_c",
+    "hours_since_disaster",
+    "rescue_eta_hours",
+    "road_accessibility",
+    "medical_accessibility",
+    "rescue_skill_level",
+]
+
+BINARY_FEATURES = ["night_time", "holiday_event"]
+
+FEATURE_ORDER = [f"is_{t}" for t in DISASTER_TYPES] + NUMERIC_FEATURES + BINARY_FEATURES
+# 5 one-hot + 9 numeric + 2 binary = 16 维
+
 
 def score_to_level(score: float) -> str:
     """连续评分 → 四级官方等级（与 prompt_templates / mock_labeler / parser 同口径）。"""
@@ -25,24 +42,13 @@ def score_to_level(score: float) -> str:
         return "重大"
     return "特别重大"
 
-NUMERIC_FEATURES = [
-    "magnitude",
-    "building_collapse_rate",
-    "estimated_trapped",
-    "temperature_c",
-    "hours_since_disaster",
-    "rescue_eta_hours",
-    "road_accessibility",
-]
-
-FEATURE_ORDER = [f"is_{t}" for t in DISASTER_TYPES] + NUMERIC_FEATURES
-
 
 def vectorize(sample: Dict) -> List[float]:
     dtype = sample.get("disaster_type", "")
     onehot = [1.0 if dtype == t else 0.0 for t in DISASTER_TYPES]
     nums = [float(sample.get(k, 0)) for k in NUMERIC_FEATURES]
-    return onehot + nums
+    binary = [float(sample.get(k, 0)) for k in BINARY_FEATURES]
+    return onehot + nums + binary
 
 
 def load_clean(path: Path) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:

@@ -31,7 +31,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from student.features import FEATURE_ORDER, vectorize, score_to_level as _level  # noqa: E402
+from student.reasoning_generator import generate_student_reasoning  # noqa: E402
 from teacher import mock_labeler  # noqa: E402
+from teacher.recommendations import build_recommendations  # noqa: E402
 
 DEFAULT_MODEL_PATH = ROOT / "student" / "model.pkl"
 
@@ -324,6 +326,11 @@ class RiskScorer:
             X, num_iteration=self.best_iter, pred_contrib=True,
         )
         top_features = _top_shap_features(contrib[0])
+
+        # Student 动态 reasoning（基于 SHAP top features，不再雷同）
+        reasoning_text = generate_student_reasoning(
+            sample, score, top_features, level_zh,
+        )
         trace_summary = _build_trace_summary(sample, top_features, level_en, priority)
 
         # ── header 元数据回退链 ────────────────────────────────────────────
@@ -337,6 +344,9 @@ class RiskScorer:
                 eff_location = {"lat": lat, "lon": lon}
 
         eff_timestamp = timestamp or sample.get("event_time_utc") or _utc_iso_now()
+
+        # 针对性救援建议（与 mock_labeler 共享同一规则引擎，保证表述一致）
+        recommendations = build_recommendations(sample, level_zh, max_items=4)
 
         return {
             "header": {
@@ -357,8 +367,11 @@ class RiskScorer:
             },
             "cot_reasoning_trace": {
                 "trace_summary": trace_summary,
+                "reasoning": reasoning_text,
                 "teacher_alignment": TEACHER_ALIGNMENT_BASELINE,
             },
+            # 扩展字段：1~4 条针对性救援建议（按 priority + tag + text 结构化输出）
+            "recommendations": recommendations,
         }
 
 
