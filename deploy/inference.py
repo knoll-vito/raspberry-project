@@ -65,6 +65,32 @@ FEATURE_DISPLAY_NAME: Dict[str, str] = {
     "road_accessibility": "road_access",
 }
 
+# 内部特征名 → 数据采集来源（喂给 trace_summary 的叙事生成）
+# RS = Remote Sensing（遥感）；GIS = Geographic Information System；
+# WX = Weather Station；InSAR = 干涉雷达；FieldReport = 现场上报
+FEATURE_SOURCE: Dict[str, str] = {
+    "is_earthquake": "Seismograph",
+    "is_flood": "RS+Hydro",
+    "is_urban_fire": "Sensor+RS",
+    "is_forest_fire": "Satellite-Thermal",
+    "is_landslide": "RS+InSAR",
+    "magnitude": "Seismograph",
+    "building_collapse_rate": "RS",
+    "estimated_trapped": "FieldReport",
+    "temperature_c": "WX",
+    "hours_since_disaster": "GPS",
+    "rescue_eta_hours": "LogisticsPlanner",
+    "road_accessibility": "GIS",
+}
+
+# 风险等级 → 死亡风险叙事尾标
+LEVEL_TO_RISK_PHRASE: Dict[str, str] = {
+    "EXTREME": "Extreme mortality risk",
+    "MAJOR":   "High mortality risk",
+    "LARGE":   "Moderate mortality risk",
+    "GENERAL": "Manageable mortality risk",
+}
+
 # Teacher alignment baseline = 验证集 Pearson r（来自 evaluate.py 输出）
 # 当数据集或模型改动后，需手工同步该常数
 TEACHER_ALIGNMENT_BASELINE: float = 0.9021
@@ -133,29 +159,117 @@ def _top_shap_features(contrib_row: np.ndarray, top_n: int = 4,
     return out
 
 
+def _phrase_for_feature(feature_internal: str, sample: Dict, direction: str) -> str:
+    """把单个 top-SHAP 特征翻译成一句"通过 X 数据源观测到 Y"的自然语言短语。"""
+    src = FEATURE_SOURCE.get(feature_internal, "Sensor")
+
+    if feature_internal == "building_collapse_rate":
+        v = sample.get("building_collapse_rate")
+        if v is None:
+            return f"Collapse rate observation via {src}"
+        if v >= 0.7:
+            qual = "High"
+        elif v >= 0.3:
+            qual = "Moderate"
+        else:
+            qual = "Low"
+        return f"{qual} collapse rate detected via {src}"
+
+    if feature_internal == "hours_since_disaster":
+        h = sample.get("hours_since_disaster")
+        if h is None:
+            return f"{src} timestamp unavailable"
+        if h > 72:
+            return f"{src} timestamp > 72h (golden window expired)"
+        if h > 48:
+            return f"{src} timestamp > 48h"
+        if h > 24:
+            return f"{src} timestamp > 24h"
+        return f"{src} timestamp = {h:g}h"
+
+    if feature_internal == "road_accessibility":
+        ra = sample.get("road_accessibility")
+        if ra is None:
+            return f"Road access unknown via {src}"
+        if ra < 0.2:
+            return f"{src}-based road isolation"
+        if ra < 0.5:
+            return f"{src}-based partial road blockage"
+        return f"{src}-based road accessible"
+
+    if feature_internal == "temperature_c":
+        t = sample.get("temperature_c")
+        if t is None:
+            return f"Ambient temperature unknown ({src})"
+        if t < 0:
+            return f"{src} reports extreme cold ({t:g}°C, hypothermia risk)"
+        if t > 35:
+            return f"{src} reports extreme heat ({t:g}°C, heatstroke risk)"
+        return f"{src} reports ambient {t:g}°C"
+
+    if feature_internal == "magnitude":
+        m = sample.get("magnitude")
+        if m is None:
+            return f"Intensity unknown via {src}"
+        return f"{src} measures intensity {m:g}"
+
+    if feature_internal == "estimated_trapped":
+        n = sample.get("estimated_trapped")
+        if n is None:
+            return f"Trapped count unknown via {src}"
+        if n >= 1000:
+            return f"{src} estimates {int(n)} trapped (mass casualty)"
+        if n >= 100:
+            return f"{src} estimates {int(n)} trapped"
+        return f"{src} estimates {int(n)} trapped (small scale)"
+
+    if feature_internal == "rescue_eta_hours":
+        eta = sample.get("rescue_eta_hours")
+        if eta is None:
+            return f"Rescue ETA unknown via {src}"
+        if eta > 12:
+            return f"{src} reports prolonged rescue ETA ({eta:g}h)"
+        if eta > 6:
+            return f"{src} reports moderate rescue ETA ({eta:g}h)"
+        return f"{src} reports rapid rescue ETA ({eta:g}h)"
+
+    if feature_internal.startswith("is_"):
+        disaster = feature_internal[3:]
+        if sample.get("disaster_type") == disaster:
+            return f"{src} confirms {disaster} event"
+        return f"{src} signal for {disaster}"
+
+    return f"{feature_internal} via {src}"
+
+
 def _build_trace_summary(sample: Dict, top_features: List[Dict],
                          level_en: str, priority: int) -> str:
-    """从 top SHAP 特征生成一行带方向的 trace summary。
+    """数据源叙事版 trace summary：
 
-    格式示例：
-        Top drivers: road_access↓ (-7.2) + collapse_rate↑ (+6.1) + magnitude↑ (+5.9)
-                     → EXTREME (priority 0)
-    箭头 + 符号让调用方一眼区分风险驱动 (↑) 与风险缓解 (↓)。
+    例：
+        High collapse rate detected via RS + GPS timestamp > 24h
+        + GIS-based road isolation = Extreme mortality risk.
+
+    每条 top-SHAP 特征翻译成「数据源 + 观测值/阈值」的自然语言短语，
+    末尾按风险等级附 mortality risk 标签。priority 不再出现在文本里
+    （它已经在 inference_result.priority 字段，不必重复）。
     """
     if not top_features:
-        return f"Low-signal scenario; level={level_en}, priority={priority}"
+        return f"Low-signal scenario; level={level_en}."
 
-    parts: List[str] = []
+    phrases: List[str] = []
     for f in top_features[:3]:
         display = f["feature"]
-        direction = f.get("direction", "")
-        raw = f.get("raw_shap")
-        if raw is None:
-            parts.append(f"{display}{direction}")
-        else:
-            parts.append(f"{display}{direction} ({raw:+.1f})")
+        # 反查内部名以从 sample 取值 / 拿 SOURCE
+        internal = next(
+            (k for k, v in FEATURE_DISPLAY_NAME.items() if v == display),
+            display,
+        )
+        direction = f.get("direction", "↑")
+        phrases.append(_phrase_for_feature(internal, sample, direction))
 
-    return f"Top drivers: {' + '.join(parts)} → {level_en} (priority {priority})"
+    risk_phrase = LEVEL_TO_RISK_PHRASE.get(level_en, "Elevated mortality risk")
+    return " + ".join(phrases) + f" = {risk_phrase}."
 
 
 # ── 核心类 ────────────────────────────────────────────────────────────────
@@ -184,8 +298,15 @@ class RiskScorer:
 
     def predict_full(self, sample: Dict, *,
                      device_id: Optional[str] = None,
-                     location: Optional[Dict] = None) -> Dict:
-        """完整决策 JSON 包：header + inference_result + SHAP + CoT trace。"""
+                     location: Optional[Dict] = None,
+                     timestamp: Optional[str] = None) -> Dict:
+        """完整决策 JSON 包：header + inference_result + SHAP + CoT trace。
+
+        header 字段优先级（高 → 低）：
+          CLI / 调用方显式传入 → sample 自带的元数据 → 默认值
+        让 starter_real.csv 的 lat/lon/event_time_utc/device_id 等元数据
+        在批量推理时自动落进 header，不必手动传 --lat / --lon。
+        """
         X = np.asarray([vectorize(sample)], dtype=np.float32)
         score = float(self.booster.predict(X, num_iteration=self.best_iter)[0])
         score = max(0.0, min(100.0, score))
@@ -198,29 +319,41 @@ class RiskScorer:
         mock_score = float(mock_label["score"])
         confidence = _compute_confidence(score, mock_score)
 
-        # LightGBM TreeSHAP 贡献
+        # LightGBM TreeSHAP 贡献（保留 raw_shap / direction 扩展字段）
         contrib = self.booster.predict(
             X, num_iteration=self.best_iter, pred_contrib=True,
         )
         top_features = _top_shap_features(contrib[0])
         trace_summary = _build_trace_summary(sample, top_features, level_en, priority)
 
+        # ── header 元数据回退链 ────────────────────────────────────────────
+        eff_device_id = device_id or sample.get("device_id") or DEFAULT_DEVICE_ID
+
+        eff_location = location
+        if eff_location is None:
+            lat = sample.get("lat")
+            lon = sample.get("lon")
+            if lat is not None and lon is not None:
+                eff_location = {"lat": lat, "lon": lon}
+
+        eff_timestamp = timestamp or sample.get("event_time_utc") or _utc_iso_now()
+
         return {
             "header": {
-                "device_id": device_id or DEFAULT_DEVICE_ID,
-                "timestamp": _utc_iso_now(),
-                "location": location,  # None 表示无 GPS 数据
+                "device_id": eff_device_id,
+                "timestamp": eff_timestamp,
+                "location": eff_location,  # None 表示无 GPS 数据
             },
             "inference_result": {
                 "score": round(score, 2),
                 "level": level_en,
-                "level_zh": level_zh,
+                "level_zh": level_zh,  # 扩展字段：保留中文等级以兼容下游中文台账
                 "confidence": confidence,
                 "priority": priority,
             },
             "explainability_analysis": {
-                "method": "LightGBM_TreeSHAP",
-                "feature_importance": top_features,
+                "method": "SHAP_Values",  # 模板字段
+                "feature_importance": top_features,  # 含扩展字段 raw_shap / direction
             },
             "cot_reasoning_trace": {
                 "trace_summary": trace_summary,

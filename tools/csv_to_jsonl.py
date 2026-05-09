@@ -24,7 +24,9 @@ REQUIRED = [
     "disaster_type", "magnitude", "building_collapse_rate", "estimated_trapped",
     "temperature_c", "hours_since_disaster", "rescue_eta_hours", "road_accessibility",
 ]
-OPTIONAL = ["event_name", "source"]
+# 元数据字段 (供 inference 时填 header.location / header.timestamp / header.device_id)
+META_FIELDS = ["lat", "lon", "event_time_utc", "device_id"]
+OPTIONAL = ["event_name", "source"] + META_FIELDS
 ALL_FIELDS = REQUIRED + OPTIONAL
 
 VALID_DISASTER_TYPES = {"earthquake", "flood", "urban_fire", "forest_fire", "landslide"}
@@ -37,6 +39,9 @@ RANGES = {
     "hours_since_disaster": (0.0, 720.0),
     "rescue_eta_hours": (0.0, 168.0),
     "road_accessibility": (0.0, 1.0),
+    # 元数据字段也带值域校验，越界视作错误
+    "lat": (-90.0, 90.0),
+    "lon": (-180.0, 180.0),
 }
 
 INT_FIELDS = {"estimated_trapped"}
