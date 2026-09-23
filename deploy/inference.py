@@ -280,6 +280,12 @@ def _build_trace_summary(sample: Dict, top_features: List[Dict],
 
 class RiskScorer:
     def __init__(self, model_path: Path = DEFAULT_MODEL_PATH):
+        model_path = Path(model_path)
+        if not model_path.is_file():
+            raise FileNotFoundError(
+                f"模型文件不存在：{model_path}。请先运行 python3 student/train.py "
+                "生成模型，或通过 --model 指定已有模型路径。"
+            )
         import joblib
         self.booster = joblib.load(model_path)
         self.best_iter = getattr(self.booster, "best_iteration", None)
