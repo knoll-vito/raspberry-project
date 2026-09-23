@@ -60,9 +60,11 @@
 pip install -r requirements.txt
 ```
 
-### 2. 使用已训练模型推理
+### 2. 准备模型后推理
 
-项目已包含训练好的 `student/model.pkl` 和 `student/calibrator.pkl`，安装依赖后即可直接推理。
+仓库未附带训练好的 `student/model.pkl` 或可选的 `student/calibrator.pkl`（这些文件由 `.gitignore` 排除）。请先按下文的训练流程准备数据并运行 `python3 student/train.py`，或将已有的兼容模型放在 `student/model.pkl`。校准器缺失时，推理会使用模型原始分数；需要校准时可另行生成 `student/calibrator.pkl`。
+
+如果模型存放在其他位置，命令行推理可通过 `--model /path/to/model.pkl` 指定。
 
 ## 使用方法
 
